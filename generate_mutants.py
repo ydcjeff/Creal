@@ -202,9 +202,9 @@ def run_one(seed: str, compilers:list[str], dst_dir:Path, SYNER:Synthesizer, suc
     # synthesize
     try:
         syn_files = SYNER.synthesizer(src_filename=src, num_mutant=NUM_MUTANTS, DEBUG=DEBUG)
-    except:
-        print('SynthesizerError')
-        os.remove(src)
+    except Exception as e:
+        print('SynthesizerError:', e if e else '<no-output>')
+        # os.remove(src)
         return 0
     for syn_i, syn_f in enumerate(syn_files):
         shutil.copy(syn_f, save_realsmith_dir / f"{succ_file_id}_syn{syn_i}.c")
@@ -221,6 +221,7 @@ if __name__=='__main__':
     parser.add_argument("--dst", required=True, type=Path, help="Destination directory for generated seeds.")
     parser.add_argument("--syn-prob", required=True, type=int, help="Synthesis probability")
     parser.add_argument("--num-mutants", required=True, type=int, help="The number of mutants per seed by realsmith")
+    parser.add_argument("--func-db", default=FUNCTION_DB_FILE, type=str, help="Path to the functiondb file")
     args = parser.parse_args()
 
     dst_dir = Path(args.dst)
@@ -228,11 +229,16 @@ if __name__=='__main__':
 
     NUM_MUTANTS = args.num_mutants
 
+    if not os.path.exists(args.func_db):
+        print(f"File {args.func_db} does not exist!")
+        parser.print_help()
+        exit(1)
+
     compilers = [
         "gcc -O0",
         "clang -O0"
     ]
-    SYNER = Synthesizer(func_database=FUNCTION_DB_FILE, prob=args.syn_prob)
+    SYNER = Synthesizer(func_database=args.func_db, prob=args.syn_prob)
     with TempDirEnv() as tmp_dir:
         os.environ['TMPDIR'] = tmp_dir.absolute().as_posix()
         total = 0
