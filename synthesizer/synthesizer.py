@@ -591,6 +591,6 @@ if __name__=='__main__':
 
     syner = Synthesizer(args.DB, prob=100)
     try:
-        all_syn_files = syner.synthesizer(args.SRC, num_mutant=1, DEBUG=1)
+        all_syn_files = syner.synthesizer(args.SRC, num_mutant=1)
     except SynthesizerError:
         print("SynthesizerError (OK).")
