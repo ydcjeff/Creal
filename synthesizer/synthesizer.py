@@ -569,7 +569,7 @@ return v0; \
                 if not self.tags[tag_id].tag_var.is_stable:
                     continue
                 # randomly decide if we want to replace this value
-                if tag_id in replaced_valuetag or random.randint(0, 100) > self.prob:
+                if tag_id in replaced_valuetag or random.randint(0, 100) < self.prob:
                     continue #skip this value
                 # randomly select a function from database
                 while True:
