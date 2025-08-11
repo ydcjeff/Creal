@@ -103,17 +103,19 @@ class Synthesizer:
         self.tags = {}
         self.scope_up = {} # key:val ==> child_scope:parent_scope
         self.scope_down = {} # key:[val] ==> parent_scope:[child_scope(s)]
+        if self.DEBUG:
+            print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "=== Static Analysis ===")
         for tag_match in tag_iter:
             tag_str, tag_id, tag_type_str, scope_curr_id, scope_parent_id, stmt_id, tag_style = tag_match.groups()
             if self.DEBUG:
-                print('-----')
-                print(f"tag_str (prefix): {tag_str}")
-                print(f"tag_id: {tag_id}")
-                print(f"tag_type_str: {tag_type_str}")
-                print(f"scope_curr_id: {scope_curr_id}")
-                print(f"scope_parent_id: {scope_parent_id}")
-                print(f"stmt_id: {stmt_id}")
-                print(f"tag_style: {tag_style}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), '-----')
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_str (prefix): {tag_str}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_id: {tag_id}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_type_str: {tag_type_str}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"scope_curr_id: {scope_curr_id}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"scope_parent_id: {scope_parent_id}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"stmt_id: {stmt_id}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_style: {tag_style}")
             # There're chances that the profiler produced recursive tags like:
             # Tag92(/*int:8498:8498:8496:e*/Tag100(/*int:8498:8498:8496:e*/var_0))
             paren_counter = 0
@@ -135,14 +137,14 @@ class Synthesizer:
                 tag_var_name = tag_var_name + ch
             assert paren_counter == 0, "The parenthesis counter should be zero now, got " + str(paren_counter) + ", the var name: " + tag_var_name
             if self.DEBUG:
-                print(f"tag_str (full): {tag_str}")
-                print(f"tag_var_name (full): {tag_var_name}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_str (full): {tag_str}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_var_name (full): {tag_var_name}")
             if tag_var_name.startswith('Tag'):
                 m = re.fullmatch(tag_ptn, tag_var_name)
                 assert m is not None, "The inner tag does not fully match our pattern, perhaps there're more inner tags? Got: " + tag_var_name
                 tag_var_name = m.groups()[-1]
             if self.DEBUG:
-                print(f"tag_var_name (short): {tag_var_name}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_var_name (short): {tag_var_name}")
             tag_id = int(tag_id)
             scope_curr_id = int(scope_curr_id)
             scope_parent_id = int(scope_parent_id)
@@ -309,6 +311,9 @@ return v0; \
             if ret != CMD.OK:
                 os.remove(exe_out)
                 raise SynthesizerError(f"failed to execute the program {filename}: {profile_out_1}")
+            if self.DEBUG:
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "=== Profiler Output ===")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), profile_out_1)
             os.remove(exe_out)
         env_re_str = ":".join([':?([-|\d]+)?']*(NUM_ENV)) #@FIXME: no need to have exact NUM_ENV env vars here, now a temp fix is shown below and thus env_re_str is useless.
 
@@ -319,6 +324,8 @@ return v0; \
         # construct tags
         self.alive_tags = []
         # get values and check stability with raw_values_1
+        if self.DEBUG:
+            print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "=== Parsing Alive Tags ===")
         checked_tag_id = [] # all tag_id that have been checked. A tag's env is not stable if it has never been checked.
         for i in range(len(raw_values_1)):
             tag_info = raw_values_1[i]
@@ -326,11 +333,22 @@ return v0; \
             curr_num_env = len(tag_info) - 2
             curr_tag_var_value = int(tag_info[1])
             curr_tag_env_value_list = [] if curr_num_env == 0 else list(map(int, tag_info[2:]))
+            if self.DEBUG:
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "----")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_info: {tag_info}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"curr_tag_id: {curr_tag_id}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"curr_num_env: {curr_num_env}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"curr_tag_var_value: {curr_tag_var_value}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"curr_tag_env_value_list: {curr_tag_env_value_list}")
             # Test the stability of the tag_var
             if hasattr(self.tags[curr_tag_id].tag_var, "var_value"):
+                if self.DEBUG:
+                    print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"prev_tag_var_value: {self.tags[curr_tag_id].tag_var.var_value}")
                 if curr_tag_var_value != self.tags[curr_tag_id].tag_var.var_value:
                     self.tags[curr_tag_id].tag_var.is_stable = False
             else:
+                if self.DEBUG:
+                    print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"prev_tag_var_value: <no-value>")
                 self.tags[curr_tag_id].tag_var.var_value = curr_tag_var_value
             if curr_tag_var_value == INVALID_TAG_VALUE: # invalid tag value because of null pointer. should only in env vars
                 self.tags[curr_tag_id].tag_var.is_stable = False
@@ -344,6 +362,8 @@ return v0; \
                     self.tags[curr_tag_id].tag_envs[env_i].var_value =curr_tag_env_value_list[env_i]
                 if curr_tag_env_value_list[env_i] == INVALID_TAG_VALUE: # invalid tag value because of null pointer. should only in env vars
                     self.tags[curr_tag_id].tag_envs[env_i].is_stable = False
+            if self.DEBUG:
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"is_stable: {self.tags[curr_tag_id].tag_var.is_stable}")
             if curr_tag_id not in self.alive_tags:
                 self.alive_tags.append(curr_tag_id)
         # all tag_id that have been checked. A tag's env is not stable if it has never been checked.
@@ -522,7 +542,7 @@ return v0; \
         assert num_mutant >= 1
         # backup src file
         tmp_f = tempfile.NamedTemporaryFile(suffix=".c", delete=False)
-        tmp_f.close
+        tmp_f.close()
         shutil.copy(src_filename, tmp_f.name)
         # insert ValueTag
         if self.DEBUG:
@@ -545,6 +565,9 @@ return v0; \
             replaced_valuetag = []
             inserted_func_ids = []
             for tag_id in self.alive_tags:
+                # non-stable value cannot be replaced
+                if not self.tags[tag_id].tag_var.is_stable:
+                    continue
                 # randomly decide if we want to replace this value
                 if tag_id in replaced_valuetag or random.randint(0, 100) > self.prob:
                     continue #skip this value
