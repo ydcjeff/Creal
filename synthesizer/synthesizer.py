@@ -252,6 +252,9 @@ return v0; \
         """
         with open(src_file, 'r') as f:
             src = f.read()
+        # There're chances that the seed program used size_t
+        if '#include <stddef.h>' not in src or '#include "stddef.h"' not in src:
+            src = '#include <stddef.h>\n' + src
         for tag_id in self.tags:
             envs = self.get_envs(tag_id, env_num=NUM_ENV)
             for env_id in envs:
