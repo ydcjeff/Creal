@@ -60,7 +60,7 @@ def run_cmd(cmd, timeout=10, DEBUG=False):
         print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), ">>run_cmd: \n", ' '.join(cmd), flush=True)
     ret, out = CMD.OK, ''
     try:
-        process = sp.run(cmd, timeout=timeout, capture_output=True)
+        process = sp.run(cmd, timeout=timeout, stdout=sp.PIPE, stderr=sp.STDOUT)
         if DEBUG:
             print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), ">>run_cmd: exit.", flush=True)
         out = process.stdout.decode("utf-8")
@@ -98,12 +98,53 @@ class Synthesizer:
         # get global/local information of each tag
         with open(src_file, "r") as f:
             code = f.read()
-        static_tags = re.findall(r'(Tag(\d+)\(\/\*(.*?):(\w+):(\w+):(\w+):(\w+)\*\/(.*?)\))', code)
+        tag_ptn = r'Tag(\d+)\(\/\*(.*?):(\w+):(\w+):(\w+):(\w+)\*\/(.*?)\)'
+        tag_iter = re.finditer(r'(Tag(\d+)\(\/\*(.*?):(\w+):(\w+):(\w+):(\w+)\*\/)', code)
         self.tags = {}
         self.scope_up = {} # key:val ==> child_scope:parent_scope
         self.scope_down = {} # key:[val] ==> parent_scope:[child_scope(s)]
-        for tag_info in static_tags:
-            tag_str, tag_id, tag_type_str, scope_curr_id, scope_parent_id, stmt_id, tag_style, tag_var_name = tag_info[:]
+        if self.DEBUG:
+            print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "=== Static Analysis ===")
+        for tag_match in tag_iter:
+            tag_str, tag_id, tag_type_str, scope_curr_id, scope_parent_id, stmt_id, tag_style = tag_match.groups()
+            if self.DEBUG:
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), '-----')
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_str (prefix): {tag_str}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_id: {tag_id}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_type_str: {tag_type_str}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"scope_curr_id: {scope_curr_id}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"scope_parent_id: {scope_parent_id}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"stmt_id: {stmt_id}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_style: {tag_style}")
+            # There're chances that the profiler produced recursive tags like:
+            # Tag92(/*int:8498:8498:8496:e*/Tag100(/*int:8498:8498:8496:e*/var_0))
+            paren_counter = 0
+            for ch in tag_str:
+                if ch == '(':
+                    paren_counter += 1
+                elif ch == ')':
+                    paren_counter -= 1
+            assert paren_counter >= 1, "The parenthesis counter should be larger than or equal to 1, got " + str(paren_counter)
+            tag_var_name = ""
+            for ch in code[tag_match.end():]:
+                if ch == '(':
+                    paren_counter += 1
+                elif ch == ')':
+                    paren_counter -= 1
+                tag_str = tag_str + ch
+                if paren_counter == 0:
+                    break
+                tag_var_name = tag_var_name + ch
+            assert paren_counter == 0, "The parenthesis counter should be zero now, got " + str(paren_counter) + ", the var name: " + tag_var_name
+            if self.DEBUG:
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_str (full): {tag_str}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_var_name (full): {tag_var_name}")
+            if tag_var_name.startswith('Tag'):
+                m = re.fullmatch(tag_ptn, tag_var_name)
+                assert m is not None, "The inner tag does not fully match our pattern, perhaps there're more inner tags? Got: " + tag_var_name
+                tag_var_name = m.groups()[-1]
+            if self.DEBUG:
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_var_name (short): {tag_var_name}")
             tag_id = int(tag_id)
             scope_curr_id = int(scope_curr_id)
             scope_parent_id = int(scope_parent_id)
@@ -246,9 +287,9 @@ return v0; \
         Run and collect values.
         """
         # profiling
-        ret, _ = run_cmd(f"{PROFILER} {filename} -- -I{CSMITH_HOME}/include", DEBUG=self.DEBUG)
+        ret, msg = run_cmd(f"{PROFILER} {filename} -- -I{CSMITH_HOME}/include", DEBUG=self.DEBUG)
         if ret != CMD.OK:
-            raise SynthesizerError
+            raise SynthesizerError(f"failed to run the profiler with {filename}: {msg}")
         
         # further synthesis will be based on self.src_syn instead of self.src to avoid heavy removal of useless tags after synthesis.
         with open(filename, 'r') as f:
@@ -261,15 +302,18 @@ return v0; \
             tmp_f.close()
             exe_out = tmp_f.name
             # run with CC1
-            ret, _ = run_cmd(f"{CC1} -I{CSMITH_HOME}/include -w -O0 {filename} -o {exe_out}", DEBUG=self.DEBUG)
+            ret, msg = run_cmd(f"{CC1} -I{CSMITH_HOME}/include -w -O0 {filename} -o {exe_out}", DEBUG=self.DEBUG)
             if ret != CMD.OK:
                 if os.path.exists(exe_out):
                     os.remove(exe_out)
-                raise SynthesizerError
+                raise SynthesizerError(f"failed to compile the seed program after instrumentation: {filename}: {msg}")
             ret, profile_out_1 = run_cmd(exe_out, timeout=3, DEBUG=self.DEBUG)
             if ret != CMD.OK:
                 os.remove(exe_out)
-                raise SynthesizerError
+                raise SynthesizerError(f"failed to execute the program {filename}: {profile_out_1}")
+            if self.DEBUG:
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "=== Profiler Output ===")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), profile_out_1)
             os.remove(exe_out)
         env_re_str = ":".join([':?([-|\d]+)?']*(NUM_ENV)) #@FIXME: no need to have exact NUM_ENV env vars here, now a temp fix is shown below and thus env_re_str is useless.
 
@@ -280,6 +324,8 @@ return v0; \
         # construct tags
         self.alive_tags = []
         # get values and check stability with raw_values_1
+        if self.DEBUG:
+            print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "=== Parsing Alive Tags ===")
         checked_tag_id = [] # all tag_id that have been checked. A tag's env is not stable if it has never been checked.
         for i in range(len(raw_values_1)):
             tag_info = raw_values_1[i]
@@ -287,11 +333,22 @@ return v0; \
             curr_num_env = len(tag_info) - 2
             curr_tag_var_value = int(tag_info[1])
             curr_tag_env_value_list = [] if curr_num_env == 0 else list(map(int, tag_info[2:]))
+            if self.DEBUG:
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "----")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"tag_info: {tag_info}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"curr_tag_id: {curr_tag_id}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"curr_num_env: {curr_num_env}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"curr_tag_var_value: {curr_tag_var_value}")
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"curr_tag_env_value_list: {curr_tag_env_value_list}")
             # Test the stability of the tag_var
             if hasattr(self.tags[curr_tag_id].tag_var, "var_value"):
+                if self.DEBUG:
+                    print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"prev_tag_var_value: {self.tags[curr_tag_id].tag_var.var_value}")
                 if curr_tag_var_value != self.tags[curr_tag_id].tag_var.var_value:
                     self.tags[curr_tag_id].tag_var.is_stable = False
             else:
+                if self.DEBUG:
+                    print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"prev_tag_var_value: <no-value>")
                 self.tags[curr_tag_id].tag_var.var_value = curr_tag_var_value
             if curr_tag_var_value == INVALID_TAG_VALUE: # invalid tag value because of null pointer. should only in env vars
                 self.tags[curr_tag_id].tag_var.is_stable = False
@@ -305,6 +362,8 @@ return v0; \
                     self.tags[curr_tag_id].tag_envs[env_i].var_value =curr_tag_env_value_list[env_i]
                 if curr_tag_env_value_list[env_i] == INVALID_TAG_VALUE: # invalid tag value because of null pointer. should only in env vars
                     self.tags[curr_tag_id].tag_envs[env_i].is_stable = False
+            if self.DEBUG:
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"is_stable: {self.tags[curr_tag_id].tag_var.is_stable}")
             if curr_tag_id not in self.alive_tags:
                 self.alive_tags.append(curr_tag_id)
         # all tag_id that have been checked. A tag's env is not stable if it has never been checked.
@@ -338,19 +397,19 @@ return v0; \
         return False
 
     def insert_func_decl(self, func_id_list):
-        # locate the last header include
-        headers = re.findall(r'(#include.*)', self.src_syn)
-        if len(headers) == 0:
-            header_end_loc = 0
-        else:
-            header_end_loc = self.src_syn.index(headers[-1]) + len(headers[-1])
-        # insert the function declaration 
+        insert_position = 0
+        # insert the function declaration as a prologue of the seed
         for func_id in list(set(func_id_list)):
+            includes = self.functionDB[func_id].include_headers
+            if includes:
+                incl_str = "\n" + "\n".join([f"#include \"{h}\"" for h in includes]) + "\n"
+                self.src_syn = self.src_syn[:insert_position] + incl_str + self.src_syn[insert_position:]
+                insert_position += len(incl_str)
             for misc in self.functionDB[func_id].misc:
                 if not self.ignore_typedef(misc):
                     misc = "\n" + misc + "\n"
-                    self.src_syn = self.src_syn[:header_end_loc] + misc + self.src_syn[header_end_loc:]
-                    header_end_loc += len(misc)
+                    self.src_syn = self.src_syn[:insert_position] + misc + self.src_syn[insert_position:]
+                    insert_position += len(misc)
 
             function_body = self.functionDB[func_id].function_body
             #FIXME: the added attribute may be incompatible with existing function attributes from the database. Can use this feature again if attributes are removed from the database.
@@ -358,9 +417,33 @@ return v0; \
             # if prob_attr > 50:
             #     function_body = "inline __attribute__((always_inline))\n" + function_body
             function_body = "\n" + function_body + "\n"
-            self.src_syn = self.src_syn[:header_end_loc] + function_body + self.src_syn[header_end_loc:]
-            header_end_loc += len(function_body)
-        
+            self.src_syn = self.src_syn[:insert_position] + function_body + self.src_syn[insert_position:]
+            insert_position += len(function_body)
+
+    # def insert_func_decl(self, func_id_list):
+    #     # locate the last header include
+    #     headers = re.findall(r'(#include.*)', self.src_syn)
+    #     if len(headers) == 0:
+    #         header_end_loc = 0
+    #     else:
+    #         header_end_loc = self.src_syn.index(headers[-1]) + len(headers[-1])
+    #     # insert the function declaration 
+    #     for func_id in list(set(func_id_list)):
+    #         for misc in self.functionDB[func_id].misc:
+    #             if not self.ignore_typedef(misc):
+    #                 misc = "\n" + misc + "\n"
+    #                 self.src_syn = self.src_syn[:header_end_loc] + misc + self.src_syn[header_end_loc:]
+    #                 header_end_loc += len(misc)
+
+    #         function_body = self.functionDB[func_id].function_body
+    #         #FIXME: the added attribute may be incompatible with existing function attributes from the database. Can use this feature again if attributes are removed from the database.
+    #         # prob_attr = random.randint(0, 100-1)
+    #         # if prob_attr > 50:
+    #         #     function_body = "inline __attribute__((always_inline))\n" + function_body
+    #         function_body = "\n" + function_body + "\n"
+    #         self.src_syn = self.src_syn[:header_end_loc] + function_body + self.src_syn[header_end_loc:]
+    #         header_end_loc += len(function_body)
+
     def synthesize_input(self, env_vars:list[Var], func_inp_list:list[str], func_inp_types:list[VarType]):
         """Synthesize input to the target function call with environmental variables"""
         new_inp_list = []
@@ -459,7 +542,7 @@ return v0; \
         assert num_mutant >= 1
         # backup src file
         tmp_f = tempfile.NamedTemporaryFile(suffix=".c", delete=False)
-        tmp_f.close
+        tmp_f.close()
         shutil.copy(src_filename, tmp_f.name)
         # insert ValueTag
         if self.DEBUG:
@@ -482,8 +565,11 @@ return v0; \
             replaced_valuetag = []
             inserted_func_ids = []
             for tag_id in self.alive_tags:
+                # non-stable value cannot be replaced
+                if not self.tags[tag_id].tag_var.is_stable:
+                    continue
                 # randomly decide if we want to replace this value
-                if tag_id in replaced_valuetag or random.randint(0, 100) > self.prob:
+                if tag_id in replaced_valuetag or random.randint(0, 100) < self.prob:
                     continue #skip this value
                 # randomly select a function from database
                 while True:

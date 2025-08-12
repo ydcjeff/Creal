@@ -234,8 +234,8 @@ def run_one(compilers:list[str], dst_dir:Path, SYNER:Synthesizer) -> Path | None
     # synthesize
     try:
         syn_files = SYNER.synthesizer(src_filename=src, num_mutant=NUM_MUTANTS, DEBUG=DEBUG)
-    except:
-        print('SynthesizerError!')
+    except Exception as e:
+        print('SynthesizerError:', e if e else '<no-output>')
         os.remove(src)
         return 0
 
@@ -245,22 +245,35 @@ def run_one(compilers:list[str], dst_dir:Path, SYNER:Synthesizer) -> Path | None
 
 
 if __name__=='__main__':
+    import time
+
     parser = argparse.ArgumentParser(description="Generate a number of realsmith mutants for evaluation.")
     parser.add_argument("--dst", required=True, type=Path, help="Destination directory for generated seeds.")
     parser.add_argument("--syn-prob", required=True, type=int, help="Synthesis probability")
     parser.add_argument("--num-mutants", required=True, type=int, help="The number of mutants per seed by realsmith")
+    parser.add_argument("--func-db", default=FUNCTION_DB_FILE, type=str, help="Path to the functiondb file")
+    parser.add_argument("--rand-seed", default=time.time_ns(), type=int, help="Randomness seed")
+    parser.add_argument("--verbose", default=False, action='store_true', help="Verbose or not")
     args = parser.parse_args()
 
     dst_dir = Path(args.dst)
     dst_dir.mkdir(parents=True, exist_ok=True)
 
     NUM_MUTANTS = args.num_mutants
+    DEBUG = 1 if args.verbose else 0
+
+    if not os.path.exists(args.func_db):
+        print(f"File {args.func_db} does not exist!")
+        parser.print_help()
+        exit(1)
+
+    random.seed(args.rand_seed)
 
     compilers = [
         "gcc -O0",
         "clang -O0"
     ]
-    SYNER = Synthesizer(func_database=FUNCTION_DB_FILE, prob=args.syn_prob)
+    SYNER = Synthesizer(func_database=args.func_db, prob=args.syn_prob)
     with TempDirEnv() as tmp_dir:
         os.environ['TMPDIR'] = tmp_dir.absolute().as_posix()
         total = 0
