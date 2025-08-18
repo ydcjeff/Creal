@@ -250,12 +250,13 @@ return v0; \
         """
         Add Tags for later profiling
         """
+        if self.DEBUG:
+            print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "=== Adding Tags ===")
         with open(src_file, 'r') as f:
             src = f.read()
-        # There're chances that the seed program used size_t
-        if '#include <stddef.h>' not in src or '#include "stddef.h"' not in src:
-            src = '#include <stddef.h>\n' + src
         for tag_id in self.tags:
+            if self.DEBUG:
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"Adding: {tag_id}")
             envs = self.get_envs(tag_id, env_num=NUM_ENV)
             for env_id in envs:
                 self.tags[tag_id].tag_envs.append(deepcopy(self.tags[env_id].tag_var))
