@@ -25,6 +25,7 @@ class AddGlobalMacro : public MatchComputation<std::string> {
                      std::string *Result) const override {
         Result->append("#include<stdint.h>\n");
         Result->append("#include<inttypes.h>\n");
+        Result->append("#include<stddef.h>\n");
         /*Add macros for TagExpression*/
         for (auto tag = tagexpression::Tags.begin(); tag != tagexpression::Tags.end(); ++tag) {
             auto tag_id = tag->first;

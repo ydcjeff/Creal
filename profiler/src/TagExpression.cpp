@@ -135,6 +135,8 @@ auto matcher = expr(
     unless(hasAncestor(
         unaryOperator(hasAnyOperatorName("++", "--")))),
     unless(hasDescendant(unaryOperator(hasAnyOperatorName("++", "--")))),
+    unless(hasAncestor(forStmt(hasLoopInit(hasDescendant(declRefExpr(hasDeclaration(equalsBoundNode("decl")))))))), // int i; for(i=0;i<1;i++)
+    unless(hasAncestor(forStmt(hasLoopInit(hasDescendant(varDecl((equalsBoundNode("decl")))))))), // for(int i=0;i<1;i++)
     hasAncestor(stmt(hasParent(compoundStmt())).bind("stmt"))
 );
 

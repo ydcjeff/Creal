@@ -19,6 +19,7 @@ from utils.compcert import CComp as this_CComp
 from pathlib import Path
 from datetime import datetime
 from termcolor import colored
+import tempfile
 
 def print_red(msg):
     print(colored(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ' >', 'yellow'), colored(msg, 'red'), flush=True)
@@ -41,18 +42,18 @@ PROG_TIMEOUT = 10
 CCOMP_TIMEOUT = 60 # compcert timeout
 CSMITH_USER_OPTIONS = "--no-volatiles --no-volatile-pointers --no-unions"
 CSMITH_TIMEOUT = 20
+YARPGEN_USER_OPTIONS = "--std=c --allow-ub-in-dc=some --allow-dead-data=true"
+YARPGEN_TIMEOUT = 20
 CREDUCE_JOBS = 1
 """TOOL"""
+USE_YARPGEN = False
 CSMITH_HOME = os.environ["CSMITH_HOME"]
-
-if not os.path.exists(os.path.join(CSMITH_HOME, 'include/csmith.h')):
-    print_red('CSMITH_HOME is not set correctly, cannot find csmith.h in "$CSMITH_HOME/include/".')
-    sys.exit(1)
+YARPGEN_HOME = os.environ["YARPGEN_HOME"]
 
 CC = CompilationSetting(
             compiler=CompilerExe.get_system_gcc(),
             opt_level=OptLevel.O3,
-            flags=("-march=native",f"-I{CSMITH_HOME}/include"),
+            flags=("-march=native",)
             )
 SAN_SAN = Sanitizer(checked_warnings=False, use_ccomp_if_available=False) # sanitizers only
 SAN_CCOMP = this_CComp.get_system_ccomp() # CompCert only
@@ -161,7 +162,10 @@ def compile_and_run(compiler, src):
     tmp_f = tempfile.NamedTemporaryFile(suffix=".exe", delete=False)
     tmp_f.close()
     exe = tmp_f.name
-    cmd = f"{compiler} {src} -I{CSMITH_HOME}/include -o {exe}"
+    if USE_YARPGEN:
+        cmd = f"{compiler} {src} -o {exe}"
+    else:
+        cmd = f"{compiler} {src} -I{CSMITH_HOME}/include -o {exe}"
     ret, out = run_cmd(cmd, COMPILER_TIMEOUT)
     if ret == 124: # another compile chance when timeout
         time.sleep(1)
@@ -207,13 +211,8 @@ def check_compile(src:str, compilers:list) -> CompCode:
         return CompCode.Wrong
     return CompCode.OK
 
-def run_one(compilers:list[str], dst_dir:Path, SYNER:Synthesizer) -> Path | None:
-    """Run compiler testing
-    """
-    save_realsmith_dir = (dst_dir)
-    succ_file_id = id_generator()
-    src = str((dst_dir / f'{succ_file_id}_seed.c').absolute())
-    print_blue('Generating seed...')
+def csmith_one(src: str):
+    print_blue('Generating seed by Csmith...')
     while True:
         cmd = f"{CSMITH_HOME}/bin/csmith {CSMITH_USER_OPTIONS} --output {src}"
         ret, out = run_cmd(cmd, CSMITH_TIMEOUT)
@@ -228,12 +227,167 @@ def run_one(compilers:list[str], dst_dir:Path, SYNER:Synthesizer) -> Path | None
         if check_sanitizers(src) and check_ccomp(src):
             break
         print("csmith failed: sanitization.")
+    return
+
+# YARPGen followed GCC's tips to define min/max.
+# However the usage of statement expression is not supported
+# by CompCert, making us unable to validate it.
+YARPGEN_CCOMP_INCOMPATIBLE_MINMAX = """\
+#define max(a,b) \\
+    ({ __typeof__ (a) _a = (a); \\
+       __typeof__ (b) _b = (b); \\
+       _a > _b ? _a : _b; })
+#define min(a,b) \\
+    ({ __typeof__ (a) _a = (a); \\
+       __typeof__ (b) _b = (b); \\
+       _a < _b ? _a : _b; })
+"""
+
+# We leverage C11's _Generic to implement the same functionality
+# We did not use #define min(a,b) (a) < (b) ? (a) : (b) because
+# there'll be unintended behaviors for example min(x++,y++).
+YARPGEN_CCOMP_COMPATIBLE_MINMAX = """
+char min_char(char x, char y) { return x < y ? x : y; }
+char max_char(char x, char y) { return x > y ? x : y; }
+
+signed char min_schar(signed char x, signed char y) { return x < y ? x : y; }
+signed char max_schar(signed char x, signed char y) { return x > y ? x : y; }
+
+unsigned char min_uchar(unsigned char x, unsigned char y) { return x < y ? x : y; }
+unsigned char max_uchar(unsigned char x, unsigned char y) { return x > y ? x : y; }
+
+short min_short(short x, short y) { return x < y ? x : y; }
+short max_short(short x, short y) { return x > y ? x : y; }
+
+unsigned short min_ushort(unsigned short x, unsigned short y) { return x < y ? x : y; }
+unsigned short max_ushort(unsigned short x, unsigned short y) { return x > y ? x : y; }
+
+int min_int(int x, int y) { return x < y ? x : y; }
+int max_int(int x, int y) { return x > y ? x : y; }
+
+unsigned int min_uint(unsigned int x, unsigned int y) { return x < y ? x : y; }
+unsigned int max_uint(unsigned int x, unsigned int y) { return x > y ? x : y; }
+
+long min_long(long x, long y) { return x < y ? x : y; }
+long max_long(long x, long y) { return x > y ? x : y; }
+
+unsigned long min_ulong(unsigned long x, unsigned long y) { return x < y ? x : y; }
+unsigned long max_ulong(unsigned long x, unsigned long y) { return x > y ? x : y; }
+
+long long min_llong(long long x, long long y) { return x < y ? x : y; }
+long long max_llong(long long x, long long y) { return x > y ? x : y; }
+
+unsigned long long min_ullong(unsigned long long x, unsigned long long y) { return x < y ? x : y; }
+unsigned long long max_ullong(unsigned long long x, unsigned long long y) { return x > y ? x : y; }
+
+float min_float(float x, float y) { return x < y ? x : y; }
+float max_float(float x, float y) { return x > y ? x : y; }
+
+double min_double(double x, double y) { return x < y ? x : y; }
+double max_double(double x, double y) { return x > y ? x : y; }
+
+long double min_ldouble(long double x, long double y) { return x < y ? x : y; }
+long double max_ldouble(long double x, long double y) { return x > y ? x : y; }
+
+#define min(x, y) _Generic((x), \\
+    char: min_char, \\
+    signed char: min_schar, \\
+    unsigned char: min_uchar, \\
+    short: min_short, \\
+    unsigned short: min_ushort, \\
+    int: min_int, \\
+    unsigned int: min_uint, \\
+    long: min_long, \\
+    unsigned long: min_ulong, \\
+    long long: min_llong, \\
+    unsigned long long: min_ullong, \\
+    float: min_float, \\
+    double: min_double, \\
+    long double: min_ldouble, \\
+    default: min_int \\
+)(x, y)
+
+#define max(x, y) _Generic((x), \\
+    char: max_char, \\
+    signed char: max_schar, \\
+    unsigned char: max_uchar, \\
+    short: max_short, \\
+    unsigned short: max_ushort, \\
+    int: max_int, \\
+    unsigned int: max_uint, \\
+    long: max_long, \\
+    unsigned long: max_ulong, \\
+    long long: max_llong, \\
+    unsigned long long: max_ullong, \\
+    float: max_float, \\
+    double: max_double, \\
+    long double: max_ldouble, \\
+    default: max_int \\
+)(x, y)
+
+"""
+
+
+def yarpgen_one(src: str):
+    print_blue('Generating seed by YARPGen...')
+    tmpdir = tempfile.mkdtemp(prefix=f"yarpgen-", dir=tempfile.gettempdir())
+    while True:
+        cmd = f"{YARPGEN_HOME}/yarpgen {YARPGEN_USER_OPTIONS} --out-dir={tmpdir}"
+        ret, out = run_cmd(cmd, YARPGEN_TIMEOUT)
+        if ret != 0:
+            print(f"yarpgen failed: generation.")
+            continue
+        # merge all files into a single seed.c
+        # our profiler also requires us to put the main() in the very end
+        tmp_path = Path(tmpdir)
+        driv_file = tmp_path / "driver.c"
+        if not driv_file.exists():
+            print("yarpgen failed: driver.c not found in the generated output.")
+            continue
+        driv_cont = driv_file.read_text().splitlines()
+        forw_decl_index = -1
+        for index, line in enumerate(driv_cont):
+            if line.startswith('void test(') and line.endswith(');'):
+                forw_decl_index = index
+                break
+        if forw_decl_index == -1:
+            print("yarpgen failed: the forward declaration of the test function is not found.")
+            continue
+        fun_file = tmp_path / "func.c"
+        if not fun_file.exists():
+            print("yarpgen failed: func.c not found in the generated output.")
+            continue
+        with open(src, "w") as fou:
+            fou.write("\n".join(driv_cont[:forw_decl_index]))
+            fou.write("\n\n")
+            # Replace the init header as it only declares extern variables
+            # that are defined in the driver file. Also, replace the min/max
+            # macro definition with ours as ccomp doesn't support statement expression
+            fou.write(fun_file.read_text().replace("#include \"init.h\"", "").replace(YARPGEN_CCOMP_INCOMPATIBLE_MINMAX, YARPGEN_CCOMP_COMPATIBLE_MINMAX))
+            fou.write("\n".join(driv_cont[forw_decl_index+1:]))
+        # check sanitization
+        if check_sanitizers(src) and check_ccomp(src):
+            break
+        print("yarpgen failed: sanitization.")
+    shutil.rmtree(tmpdir)
+    return
+
+def run_one(compilers:list[str], dst_dir:Path, SYNER:Synthesizer) -> Path | None:
+    """Run compiler testing
+    """
+    save_realsmith_dir = (dst_dir)
+    succ_file_id = id_generator()
+    src = str((dst_dir / f'{succ_file_id}_seed.c').absolute())
+    if USE_YARPGEN:
+        yarpgen_one(src)
+    else:
+        csmith_one(src)
     print_blue(f"Seed generated: {src}")
     ret = check_compile(src, compilers)
     print_blue('Synthesizing mutants...')
     # synthesize
     try:
-        syn_files = SYNER.synthesizer(src_filename=src, num_mutant=NUM_MUTANTS, DEBUG=DEBUG)
+        syn_files = SYNER.synthesizer(src_filename=src, num_mutant=NUM_MUTANTS, use_yarpgen=USE_YARPGEN, DEBUG=DEBUG)
     except Exception as e:
         print('SynthesizerError:', e if e else '<no-output>')
         os.remove(src)
@@ -253,6 +407,7 @@ if __name__=='__main__':
     parser.add_argument("--num-mutants", required=True, type=int, help="The number of mutants per seed by realsmith")
     parser.add_argument("--func-db", default=FUNCTION_DB_FILE, type=str, help="Path to the functiondb file")
     parser.add_argument("--rand-seed", default=time.time_ns(), type=int, help="Randomness seed")
+    parser.add_argument("--yarpgen", default=False, action='store_true', help="Replace Csmith with YARPGen")
     parser.add_argument("--verbose", default=False, action='store_true', help="Verbose or not")
     args = parser.parse_args()
 
@@ -261,6 +416,32 @@ if __name__=='__main__':
 
     NUM_MUTANTS = args.num_mutants
     DEBUG = 1 if args.verbose else 0
+
+    USE_YARPGEN = args.yarpgen
+    if USE_YARPGEN:
+        if not os.path.exists(os.path.join(YARPGEN_HOME, 'yarpgen')):
+            print_red('YARPGEN_HOME is not set correctly, cannot find the yarpgen binary in "$YARPGEN_HOME/".')
+            sys.exit(1)
+        CC = CompilationSetting(
+            compiler=CC.compiler,
+            opt_level=CC.opt_level,
+            flags=CC.flags + ("-mcmodel=large",),
+            include_paths=CC.include_paths,
+            system_include_paths=CC.system_include_paths,
+            macro_definitions=CC.macro_definitions
+        )
+    else:
+        if not os.path.exists(os.path.join(CSMITH_HOME, 'include/csmith.h')):
+            print_red('CSMITH_HOME is not set correctly, cannot find csmith.h in "$CSMITH_HOME/include/".')
+            sys.exit(1)
+        CC = CompilationSetting(
+            compiler=CC.compiler,
+            opt_level=CC.opt_level,
+            flags=CC.flags,
+            include_paths=CC.include_paths + (f"{CSMITH_HOME}/include",),
+            system_include_paths=CC.system_include_paths,
+            macro_definitions=CC.macro_definitions
+        )
 
     if not os.path.exists(args.func_db):
         print(f"File {args.func_db} does not exist!")

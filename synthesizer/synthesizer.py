@@ -250,9 +250,13 @@ return v0; \
         """
         Add Tags for later profiling
         """
+        if self.DEBUG:
+            print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "=== Adding Tags ===")
         with open(src_file, 'r') as f:
             src = f.read()
         for tag_id in self.tags:
+            if self.DEBUG:
+                print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), f"Adding: {tag_id}")
             envs = self.get_envs(tag_id, env_num=NUM_ENV)
             for env_id in envs:
                 self.tags[tag_id].tag_envs.append(deepcopy(self.tags[env_id].tag_var))
@@ -281,20 +285,23 @@ return v0; \
             f.write(src)
 
 
-    def profiling(self, filename):
+    def profiling(self, filename, use_yarpgen=False):
         """
         Instrument file with profiler;
         Run and collect values.
         """
         # profiling
-        ret, msg = run_cmd(f"{PROFILER} {filename} -- -I{CSMITH_HOME}/include", DEBUG=self.DEBUG)
+        if use_yarpgen:
+            ret, msg = run_cmd(f"{PROFILER} {filename}", DEBUG=self.DEBUG)
+        else: # use csmith
+            ret, msg = run_cmd(f"{PROFILER} {filename} -- -I{CSMITH_HOME}/include", DEBUG=self.DEBUG)
         if ret != CMD.OK:
             raise SynthesizerError(f"failed to run the profiler with {filename}: {msg}")
         
         # further synthesis will be based on self.src_syn instead of self.src to avoid heavy removal of useless tags after synthesis.
         with open(filename, 'r') as f:
             self.src_syn_orig = f.read()
-        
+
         self.static_analysis(filename)
         self.add_tags(filename)
 
@@ -302,7 +309,10 @@ return v0; \
             tmp_f.close()
             exe_out = tmp_f.name
             # run with CC1
-            ret, msg = run_cmd(f"{CC1} -I{CSMITH_HOME}/include -w -O0 {filename} -o {exe_out}", DEBUG=self.DEBUG)
+            if use_yarpgen:
+                ret, msg = run_cmd(f"{CC1} -mcmodel=large -w -O0 {filename} -o {exe_out}", DEBUG=self.DEBUG)
+            else: # use csmith
+                ret, msg = run_cmd(f"{CC1} -I{CSMITH_HOME}/include -w -O0 {filename} -o {exe_out}", DEBUG=self.DEBUG)
             if ret != CMD.OK:
                 if os.path.exists(exe_out):
                     os.remove(exe_out)
@@ -527,7 +537,7 @@ return v0; \
         self.src_syn = self.src_syn.replace(self.tags[tag_id].tag_str, f'/*TAG{tag_id}:STA*/' + func_call + f'/*TAG{tag_id}:END:{self.tags[tag_id].tag_var.var_name}*/')
 
 
-    def synthesizer(self, src_filename:str, num_mutant:int=1, DEBUG:bool=False):
+    def synthesizer(self, src_filename:str, num_mutant:int=1, use_yarpgen:bool=False, DEBUG:bool=False):
         """
         Synthesize a source file by replacing variables/constants with function calls.
         """
@@ -547,7 +557,7 @@ return v0; \
         # insert ValueTag
         if self.DEBUG:
             print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), ">profiling start", flush=True)
-        self.profiling(tmp_f.name)
+        self.profiling(tmp_f.name, use_yarpgen=use_yarpgen)
         if self.DEBUG:
             print(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), ">profiling end", flush=True)
         with open(tmp_f.name, "r") as f:
