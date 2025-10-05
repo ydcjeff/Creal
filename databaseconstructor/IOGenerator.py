@@ -43,7 +43,7 @@ class IOGenerator():
             )
 
         
-        self.sanitizer = Sanitizer(use_ub_address_sanitizer=True, use_memory_sanitizer=True, use_ccomp_if_available=True)
+        self.sanitizer = Sanitizer(use_ub_address_sanitizer=True, use_ccomp_if_available=True)
 
         if which("typesanitizer") is None:
             self.typesanitizer = None

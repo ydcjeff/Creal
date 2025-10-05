@@ -7,6 +7,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <type_traits>
 #include <iostream>
+#include <cstdlib>
 
 #include "ProfilerEntry.hpp"
 
@@ -65,6 +66,16 @@ template <typename InstrTool> int runToolOnCode(RefactoringTool &Tool) {
     std::unique_ptr<tooling::FrontendActionFactory> Factory =
         tooling::newFrontendActionFactory(&Finder);
 
+    std::vector<std::string> extra = {};
+    auto glibc_include_dir = std::getenv("CREAL_GLIBC_INCLUDE_DIR");
+    auto clang_resource_dir = std::getenv("CREAL_CLANG_RESOURCE_DIR");
+    if (glibc_include_dir) {
+        extra.push_back(std::string("-isystem") + glibc_include_dir);
+    }
+    if (clang_resource_dir) {
+        extra.push_back(std::string("-isystem") + clang_resource_dir);
+    }
+    Tool.appendArgumentsAdjuster(clang::tooling::getInsertArgumentAdjuster(extra, clang::tooling::ArgumentInsertPosition::BEGIN));
     auto Ret = Tool.run(Factory.get());
     if (!Ret)
         if (!applyReplacements(Tool)) {
