@@ -15,6 +15,8 @@ CC2 = "clang"
 NUM_ENV = 5 # number of env variables used for each tag, "1" means one env_val, e.g., Tag1:tag_val:env_val
 PROFILER = f"{os.path.dirname(__file__)}/../profiler/build/bin/profiler --mode=expr"
 CSMITH_HOME = os.environ["CSMITH_HOME"]
+CREAL_CLANG_RESOURCE_DIR = os.environ['CREAL_CLANG_RESOURCE_DIR']
+CREAL_GLIBC_INCLUDE_DIR = os.environ['CREAL_GLIBC_INCLUDE_DIR']
 
 INVALID_TAG_VALUE = 111 # we use this value to indicate invalid tag values
 
@@ -294,7 +296,7 @@ return v0; \
         if use_yarpgen:
             ret, msg = run_cmd(f"{PROFILER} {filename}", DEBUG=self.DEBUG)
         else: # use csmith
-            ret, msg = run_cmd(f"{PROFILER} {filename} -- -I{CSMITH_HOME}/include", DEBUG=self.DEBUG)
+            ret, msg = run_cmd(f"{PROFILER} {filename} -- -I{CSMITH_HOME}/include -I{CREAL_CLANG_RESOURCE_DIR} -I{CREAL_GLIBC_INCLUDE_DIR}", DEBUG=self.DEBUG)
         if ret != CMD.OK:
             raise SynthesizerError(f"failed to run the profiler with {filename}: {msg}")
         
